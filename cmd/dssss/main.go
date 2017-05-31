@@ -50,12 +50,6 @@ func main() {
 		printUsageAndExit()
 	}
 	switch flag.Args()[0] {
-	case "generate":
-		key, err := dc.NewKey()
-		if err != nil {
-			log.Fatal(err)
-		}
-		fmt.Printf("MasterKey: %s\n", key)
 	case "init":
 		_, key, err := fs.NewFS().Initialize()
 		if err != nil {

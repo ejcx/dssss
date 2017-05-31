@@ -14,9 +14,11 @@ import (
 )
 
 const (
-	Secret     = "/v1/secret/{name:[a-zA-Z0-9]+}"
-	FileBase   = "secrets/"
-	AuthHeader = "Auth-PKCS7"
+	Auth         = "/v1/auth"
+	Secret       = "/v1/secret/{name:[a-zA-Z0-9]+}"
+	FileBase     = "secrets/"
+	AuthHeader   = "Auth-PKCS7-DSSSS"
+	ReAuthHeader = "ReAuth-DSSSS"
 )
 
 var (
@@ -25,6 +27,10 @@ var (
 		&Route{
 			Secret,
 			SecretHandler,
+		},
+		&Route{
+			Auth,
+			AuthHandler,
 		},
 	}
 )
@@ -63,8 +69,21 @@ type SecretContent struct {
 	SecretCiphertext []byte
 }
 
-func FetchAuth(r *http.Request) string {
-	return r.Header.Get(AuthHeader)
+func authMiddleware(w http.ResponseWriter, r *http.Request, handle func(w http.ResponseWriter, r *http.Request, authed *auth.Auth)) {
+	pkcs7raw := r.Header.Get(AuthHeader)
+	authed, err := auth.AuthUser(pkcs7raw)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	w.Header().Add(ReAuthHeader, "SSSSS")
+	if handle != nil {
+		handle(w, r, authed)
+	}
+}
+
+func AuthHandler(w http.ResponseWriter, r *http.Request) {
+	authMiddleware(w, r, nil)
 }
 
 func SecretHandler(w http.ResponseWriter, r *http.Request) {
@@ -112,41 +131,37 @@ func SecretHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "GET":
-		var e EncryptedSecret
-		vars := mux.Vars(r)
-		name := vars["name"]
-		if name == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		buf, err := SingletonServer.FS.ReadFile("secret/" + name)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		err = json.Unmarshal(buf, &e)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		secret, roles, err := OpenSecret(&e)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
+		authMiddleware(w, r, func(w http.ResponseWriter, r *http.Request, authed *auth.Auth) {
+			var e EncryptedSecret
+			vars := mux.Vars(r)
+			name := vars["name"]
+			if name == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			buf, err := SingletonServer.FS.ReadFile("secret/" + name)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			err = json.Unmarshal(buf, &e)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			secret, roles, err := OpenSecret(&e)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 
-		pkcs7raw := FetchAuth(r)
-		a, err := auth.AuthUser(pkcs7raw)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		err = a.IsAllowed(roles)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		w.Write([]byte(secret))
+			err = authed.IsAllowed(roles)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			w.Write([]byte(secret))
+		})
 	default:
 	}
 }
