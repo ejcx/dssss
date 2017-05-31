@@ -2,21 +2,21 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 	"io/ioutil"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
+	"github.com/ejcx/dssss/auth"
 	"github.com/ejcx/dssss/dc"
 	"github.com/ejcx/dssss/fs"
 	"github.com/gorilla/mux"
 )
 
 const (
-	Secret   = "/v1/secret/{name:[a-zA-Z0-9]+}"
-	FileBase = "secrets/"
+	Secret     = "/v1/secret/{name:[a-zA-Z0-9]+}"
+	FileBase   = "secrets/"
+	AuthHeader = "Auth-PKCS7"
 )
 
 var (
@@ -55,13 +55,16 @@ type RouteInfo struct {
 
 type EncryptedSecret struct {
 	Bytes         []byte
-	RoleList      []string
 	KeyCiphertext []byte
 }
 
 type SecretContent struct {
 	RoleList         []string
 	SecretCiphertext []byte
+}
+
+func FetchAuth(r *http.Request) string {
+	return r.Header.Get(AuthHeader)
 }
 
 func SecretHandler(w http.ResponseWriter, r *http.Request) {
@@ -126,9 +129,21 @@ func SecretHandler(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		secret, _, err := OpenSecret(&e)
+		secret, roles, err := OpenSecret(&e)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		pkcs7raw := FetchAuth(r)
+		a, err := auth.AuthUser(pkcs7raw)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		err = a.IsAllowed(roles)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		w.Write([]byte(secret))
@@ -162,26 +177,11 @@ func OpenSecret(e *EncryptedSecret) (string, []string, error) {
 		return "", nil, err
 	}
 
-	// If we have gotten this far, ensure that the unencrypted
-	// roles match the encrypted roles to verify that no funny
-	// business has happened with them.
-	for _, irole := range secretContent.RoleList {
-		foundIrole := false
-		for _, jrole := range e.RoleList {
-			if strings.ToLower(jrole) == strings.ToLower(irole) {
-				foundIrole = true
-			}
-		}
-		if !foundIrole {
-			return "", nil, errors.New("Unable to find matching role in innerlist.")
-		}
-	}
-
 	secret, err := dc.Open(&secretKey, secretContent.SecretCiphertext)
 	if err != nil {
 		return "", nil, err
 	}
-	return string(secret), e.RoleList, nil
+	return string(secret), secretContent.RoleList, nil
 }
 
 // SealSecret takes a secret and a slice of roles and creates
@@ -222,7 +222,6 @@ func SealSecret(secret string, roles []string) (*EncryptedSecret, error) {
 
 	return &EncryptedSecret{
 		Bytes:         secretBytes,
-		RoleList:      roles,
 		KeyCiphertext: secretKeyCipher,
 	}, nil
 }

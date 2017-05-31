@@ -22,10 +22,7 @@ MasterKey: 00000000000000000000000000000000
 dssss introduces the concept of *distinguished roles*.
 
 Within dssss, administration is required to be done from the 
-## Cryptography
-It's important to outline the cryptographic details of how dssss
-encrypts, stores, and accesses secrets.
-
+## Cryptography It's important to outline the cryptographic details of how dssss encrypts, stores, and accesses secrets.
 ### Algorithms
 All cryptographic algorithms symmetric key AEADs. The underlying
 cryptographic primitives are provided through the crypto/secretbox

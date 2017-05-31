@@ -1,0 +1,40 @@
+package auth
+
+import (
+	"fmt"
+	"testing"
+)
+
+var (
+	TestPKCS7    = `MIAGCSqGSIb3DQEHAqCAMIACAQExCzAJBgUrDgMCGgUAMIAGCSqGSIb3DQEHAaCAJIAEggGwewogICJkZXZwYXlQcm9kdWN0Q29kZXMiIDogbnVsbCwKICAicHJpdmF0ZUlwIiA6ICIxNzIuMzEuMTUuMjI1IiwKICAiYXZhaWxhYmlsaXR5Wm9uZSIgOiAidXMtd2VzdC0xYSIsCiAgInZlcnNpb24iIDogIjIwMTAtMDgtMzEiLAogICJpbnN0YW5jZUlkIiA6ICJpLTAwMjZjM2FmM2IzYzRlODFlIiwKICAiYmlsbGluZ1Byb2R1Y3RzIiA6IG51bGwsCiAgImluc3RhbmNlVHlwZSIgOiAidDIuc21hbGwiLAogICJpbWFnZUlkIiA6ICJhbWktMmFmYmRlNGEiLAogICJwZW5kaW5nVGltZSIgOiAiMjAxNy0wNS0zMVQwMzo0Njo1N1oiLAogICJhY2NvdW50SWQiIDogIjM1NDMyMjQ1ODQ4MyIsCiAgImFyY2hpdGVjdHVyZSIgOiAieDg2XzY0IiwKICAia2VybmVsSWQiIDogbnVsbCwKICAicmFtZGlza0lkIiA6IG51bGwsCiAgInJlZ2lvbiIgOiAidXMtd2VzdC0xIgp9AAAAAAAAMYIBFzCCARMCAQEwaTBcMQswCQYDVQQGEwJVUzEZMBcGA1UECBMQV2FzaGluZ3RvbiBTdGF0ZTEQMA4GA1UEBxMHU2VhdHRsZTEgMB4GA1UEChMXQW1hem9uIFdlYiBTZXJ2aWNlcyBMTEMCCQCWukjZ5V4aZzAJBgUrDgMCGgUAoF0wGAYJKoZIhvcNAQkDMQsGCSqGSIb3DQEHATAcBgkqhkiG9w0BCQUxDxcNMTcwNTMxMDM0NzAxWjAjBgkqhkiG9w0BCQQxFgQUNILTt3nygCCCH+uv2gKrTxKSJ3kwCQYHKoZIzjgEAwQuMCwCFFrCKyqoYKiepd9zvomHfpgMJgnQAhQqjLHWuCPMojwOWyapFf9Zcb8GjwAAAAAAAA==`
+	TestBadPKCS7 = `MIAGCSqGSIb3DQEHAqCAMIACAQExCzAJBgUrDgMCGgUAMIAGCSqGSIb3DQEHAaCAJIAEggGwewogICJkZXZwYXlQcm9kdWN0Q29kZXMiIDogbnVsbCwKICAicHJpdmF0ZUlwIiA6ICIxNzIuMzEuMTUuMjI1IiwKICAiYXZhaWxhYmlsaXR5Wm9uZSIgOiAidXMtd2VzdC0xYSIsCiAgInZlcnNpb24iIDogIjIwMTAtMDgtMzEiLAogICJpbnN0YW5jZUlkIiA6ICJpLTAwMjZjM2FmM2IzYzRlODFlIiwKICAiYmlsbGluZ1Byb2R1Y3RzIiA6IG51bGwsCiAgImluc3RhbmNlVHlwZSIgOiAidDIuc21hbGwiLAogICJpbWFnZUlkIiA6ICJhbWktMmFmYmRlNGEiLAogICJwZW5kaW5nVGltZSIgOiAiMjAxNy0wNS0zMVQwMzo0Njo1N1oiLAogICJhY2NvdW50SWQiIDogIjM1NDMyMjQ1ODQ4MyIsCiAgImFyY2hpdGVjdHVyZSIgOiAieDg2XzY0IiwKICAia2VycmVsSWQiIDogbnVsbCwKICAicmFtZGlza0lkIiA6IG51bGwsCiAgInJlZ2lvbiIgOiAidXMtd2VzdC0xIgp9AAAAAAAAMYIBFzCCARMCAQEwaTBcMQswCQYDVQQGEwJVUzEZMBcGA1UECBMQV2FzaGluZ3RvbiBTdGF0ZTEQMA4GA1UEBxMHU2VhdHRsZTEgMB4GA1UEChMXQW1hem9uIFdlYiBTZXJ2aWNlcyBMTEMCCQCWukjZ5V4aZzAJBgUrDgMCGgUAoF0wGAYJKoZIhvcNAQkDMQsGCSqGSIb3DQEHATAcBgkqhkiG9w0BCQUxDxcNMTcwNTMxMDM0NzAxWjAjBgkqhkiG9w0BCQQxFgQUNILTt3nygCCCH+uv2gKrTxKSJ3kwCQYHKoZIzjgEAwQuMCwCFFrCKyqoYKiepd9zvomHfpgMJgnQAhQqjLHWuCPMojwOWyapFf9Zcb8GjwAAAAAAAA==`
+)
+
+func TestPKCS7Parse(t *testing.T) {
+	identity, err := ParsePKCS7(TestPKCS7)
+	if err != nil {
+		t.Errorf("Failed to parse a good pkcs7: %s", err)
+	}
+	if identity == nil {
+		t.Errorf("Nil aws identity returned for a good pkcs7")
+	}
+	fmt.Println(identity)
+}
+
+func TestBadPKCS7Parse(t *testing.T) {
+	identity, err := ParsePKCS7(TestBadPKCS7)
+	if err == nil {
+		t.Errorf("Successfully parsed a bad pkcs7: %s", err)
+	}
+	if identity != nil {
+		t.Errorf("NonNil aws identity returned for a bad pkcs7")
+	}
+}
+
+func TestAuth(t *testing.T) {
+	auth, err := AuthUser(TestPKCS7)
+	if err != nil {
+		t.Errorf("Could not find get auth: %s", err)
+	}
+	fmt.Println(auth)
+}
