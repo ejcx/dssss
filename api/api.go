@@ -22,6 +22,10 @@ const (
 )
 
 var (
+	day = time.Second * 86400
+)
+
+var (
 	SingletonServer *Server
 	RouteList       = []*Route{
 		&Route{
@@ -72,11 +76,26 @@ type SecretContent struct {
 func authMiddleware(w http.ResponseWriter, r *http.Request, handle func(w http.ResponseWriter, r *http.Request, authed *auth.Auth)) {
 	pkcs7raw := r.Header.Get(AuthHeader)
 	authed, err := auth.AuthUser(pkcs7raw)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+	if pkcs7raw == "" {
+		reauthraw := r.Header.Get(ReAuthHeader)
+		authed, err = auth.ValidateReauth(reauthraw)
+		if err != nil {
+			log.Println(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+	} else {
+		if err != nil {
+			log.Println(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		reauth, err := authed.CreateReAuthKey(day)
+		if err != nil {
+			log.Printf("Could not create reauth token: %s", err)
+		}
+		w.Header().Add(ReAuthHeader, reauth)
 	}
-	w.Header().Add(ReAuthHeader, "SSSSS")
 	if handle != nil {
 		handle(w, r, authed)
 	}
@@ -86,83 +105,106 @@ func AuthHandler(w http.ResponseWriter, r *http.Request) {
 	authMiddleware(w, r, nil)
 }
 
-func SecretHandler(w http.ResponseWriter, r *http.Request) {
+func read(w http.ResponseWriter, r *http.Request, authed *auth.Auth) {
+	if !authed.CanRead() {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	var e EncryptedSecret
+	vars := mux.Vars(r)
+	name := vars["name"]
+	if name == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	buf, err := SingletonServer.FS.ReadFile("secret/" + name)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	err = json.Unmarshal(buf, &e)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	secret, roles, err := OpenSecret(&e)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	err = authed.IsAllowed(roles)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	w.Write([]byte(secret))
+}
+
+func del(w http.ResponseWriter, r *http.Request, authed *auth.Auth) {
+	if !authed.CanDelete() {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	vars := mux.Vars(r)
+	name := vars["name"]
+	if name == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	err := SingletonServer.FS.WriteSecret(name, "")
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+}
+
+func put(w http.ResponseWriter, r *http.Request, authed *auth.Auth) {
 	var (
 		putInput PutSecretInput
 	)
+	if !authed.CanWrite() {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	vars := mux.Vars(r)
+	name := vars["name"]
+	if name == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	buf, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	err = json.Unmarshal(buf, &putInput)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	enc, err := SealSecret(putInput.Secret, putInput.Roles)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	err = SingletonServer.FS.WriteSecret(name, enc)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+}
+
+func SecretHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "DELETE":
-		vars := mux.Vars(r)
-		name := vars["name"]
-		if name == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		err := SingletonServer.FS.WriteSecret(name, "")
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
+		authMiddleware(w, r, del)
 	case "PUT":
-		vars := mux.Vars(r)
-		name := vars["name"]
-		if name == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		buf, err := ioutil.ReadAll(r.Body)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		err = json.Unmarshal(buf, &putInput)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		enc, err := SealSecret(putInput.Secret, putInput.Roles)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		err = SingletonServer.FS.WriteSecret(name, enc)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
+		authMiddleware(w, r, put)
 	case "GET":
-		authMiddleware(w, r, func(w http.ResponseWriter, r *http.Request, authed *auth.Auth) {
-			var e EncryptedSecret
-			vars := mux.Vars(r)
-			name := vars["name"]
-			if name == "" {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			buf, err := SingletonServer.FS.ReadFile("secret/" + name)
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-			err = json.Unmarshal(buf, &e)
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-			secret, roles, err := OpenSecret(&e)
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-
-			err = authed.IsAllowed(roles)
-			if err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			w.Write([]byte(secret))
-		})
+		authMiddleware(w, r, read)
 	default:
+		w.WriteHeader(http.StatusBadRequest)
 	}
 }
 

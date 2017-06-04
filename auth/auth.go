@@ -1,13 +1,18 @@
 package auth
 
 import (
+	"crypto/rand"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/nacl/secretbox"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -56,11 +61,32 @@ vSeDCOUMYQR7R9LINYwouHIziqQYMAkGByqGSM44BAMDLwAwLAIUWXBlk40xTwSw
 )
 
 var (
-	DistinguishedRoles = "RootDSSSS"
+	DistinguishedRoles = map[string]*Permission{
+		"deletedssss": &Permission{Read: false, Write: false, Root: false, List: false, Delete: true},
+		"rootdssss":   &Permission{Read: true, Write: true, Root: true, List: true, Delete: true},
+		"readdssss":   &Permission{Read: true, Write: false, Root: false, List: false, Delete: false},
+		"listdssss":   &Permission{Read: false, Write: false, Root: false, List: true, Delete: false},
+		"writedssss":  &Permission{Read: false, Write: true, Root: false, List: false, Delete: false},
+	}
+	reauthKey [32]byte
 )
 
+type Permission struct {
+	Read   bool
+	Write  bool
+	Root   bool
+	List   bool
+	Delete bool
+}
+
 type Auth struct {
-	Role string
+	Role       string
+	Permission *Permission
+}
+
+type reAuth struct {
+	A Auth
+	E time.Time
 }
 
 //
@@ -71,6 +97,12 @@ type Auth struct {
 // instance, fetch the AMI-ID, and finally get the Role ARN and Role Name.
 // Don't forget to validate the AWS Identity Document.
 
+func init() {
+	_, err := rand.Read(reauthKey[:])
+	if err != nil {
+		log.Fatalf("Could not create re-auth key: %s", err)
+	}
+}
 func getawscert() ([]*x509.Certificate, error) {
 	block, rest := pem.Decode([]byte(AWSCertificate))
 	if len(rest) != 0 {
@@ -205,8 +237,13 @@ func AuthUser(pkcs7raw string) (*Auth, error) {
 	if len(instanceProfile.Roles) == 0 {
 		return nil, errors.New("Authenticated, but does no associated roles with instance")
 	}
+	role := *instanceProfile.Roles[0].RoleName
+	perm := new(Permission)
+	if permission, ok := DistinguishedRoles[role]; ok {
+		perm = permission
+	}
 
-	return &Auth{Role: *instanceProfile.Roles[0].RoleName}, nil
+	return &Auth{Role: role, Permission: perm}, nil
 }
 
 func (a *Auth) IsAllowed(roleList []string) error {
@@ -220,4 +257,63 @@ func (a *Auth) IsAllowed(roleList []string) error {
 		}
 	}
 	return fmt.Errorf("Did not find role %s in allowed role list", a.Role)
+}
+
+func (a *Auth) CanRead() bool {
+	return a.Permission.Read || a.Permission.Root
+}
+
+func (a *Auth) CanWrite() bool {
+	return a.Permission.Write || a.Permission.Root
+}
+
+func (a *Auth) CanDelete() bool {
+	return a.Permission.Delete || a.Permission.Root
+}
+
+func (a *Auth) Root() bool {
+	return a.Permission.Root
+}
+
+func (a *Auth) CreateReAuthKey(duration time.Duration) (string, error) {
+	reauth := reAuth{
+		A: *a,
+		E: time.Now().Add(duration),
+	}
+	buf, err := json.Marshal(reauth)
+	if err != nil {
+		return "", err
+	}
+
+	var nonce [24]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return "", err
+	}
+	s := secretbox.Seal(nonce[:], buf, &nonce, &reauthKey)
+	return hex.EncodeToString(s), nil
+}
+
+func ValidateReauth(reauth string) (*Auth, error) {
+	var (
+		r     reAuth
+		nonce [24]byte
+		msg   []byte
+	)
+	ciphertext, err := hex.DecodeString(reauth)
+	if err != nil {
+		return nil, err
+	}
+	copy(nonce[:], ciphertext[:24])
+	msg, ok := secretbox.Open(msg[:0], ciphertext[24:], &nonce, &reauthKey)
+	if !ok {
+		return nil, errors.New("Unable to decrypt message")
+	}
+	err = json.Unmarshal([]byte(msg), &r)
+	if err != nil {
+		return nil, err
+	}
+	if time.Now().After(r.E) {
+		return nil, errors.New("Token is expired")
+	}
+	return &r.A, nil
 }
