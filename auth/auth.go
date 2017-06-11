@@ -89,14 +89,6 @@ type reAuth struct {
 	E time.Time
 }
 
-//
-// Look at github.com/hashicorp/vault/builtin/credential/aws/path_login.go
-// This contains an example for how to do AWS authentication with an
-// AWS Identity Document.
-// Once you have the AWS Identity Document, you need to query the AWS
-// instance, fetch the AMI-ID, and finally get the Role ARN and Role Name.
-// Don't forget to validate the AWS Identity Document.
-
 func init() {
 	_, err := rand.Read(reauthKey[:])
 	if err != nil {

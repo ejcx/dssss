@@ -8,14 +8,26 @@ dssss is specifically for AWS. It provides an API that will:
 
 
 ## Getting started with dssss
-dssss requires master secret. Running the generate sub-command
-will get you started by generating a master secret and a master
-token for administrative tasks.
+dssss does not require any configuration or bootstrapping setup process.
 
+What dssss does require is access to KMS and the AWS Parameter store. When
+dssss is run for the first time it will do the following things.
+
+  - Create a new KMS Master Key.
+  - Generate a new data key associated with that master key.
+  - Generate a "seal" key. 
+  - Store a dssss configuration in the AWS parameter store.
+
+After the first time dssss is run, dssss will just pull its configuration
+out of the AWS parameter store and start the server.
+
+Running dssss is as easy as:
 ```
-$ ./dsss init
-MasterKey: 00000000000000000000000000000000
+$ ./dssss
 ```
+
+For more information about what each component is used for, especially what
+they encryption keys are used for, consult the cryptography details section.
 
 ## Administration
 ### Distinguished roles

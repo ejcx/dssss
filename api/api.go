@@ -122,7 +122,7 @@ func read(w http.ResponseWriter, r *http.Request, authed *auth.Auth) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	err = json.Unmarshal(buf, &e)
+	err = json.Unmarshal([]byte(buf), &e)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
