@@ -1,51 +1,59 @@
 package fs
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/aws-sdk-go/service/kms"
+	"github.com/aws/aws-sdk-go/service/ssm"
 	"github.com/ejcx/dssss/dc"
 )
 
 var (
 	DSConfig = "config.json"
+	sess     *session.Session
 )
 
 type ConfigFile struct {
 	MasterKeyCiphertext []byte
+	KMSArn              string
+	Active              bool
 }
 
 // FS provides the methods necessary in order to manage the files
 // and data that dssss needs. Under the hood, FS just holds an
 // s3 session.
 type FS struct {
-	Downloader *s3manager.Downloader
-	Uploader   *s3manager.Uploader
-	Sess       *session.Session
-	Bucket     string
+	SSM       *ssm.SSM
+	Namespace string
+	KMSArn    string
 }
 
-func (f *FS) ReadFile(fname string) ([]byte, error) {
-	var b []byte
-	buf := aws.NewWriteAtBuffer(b)
-	n, err := f.Downloader.Download(buf, &s3.GetObjectInput{
-		Bucket: aws.String(f.Bucket),
-		Key:    aws.String(fname),
-	})
+func init() {
+	sess = session.Must(session.NewSession(&aws.Config{
+		Region: aws.String("us-west-1"),
+	}))
+}
+func (f *FS) ReadFile(fname string) (string, error) {
+	g := &ssm.GetParametersInput{
+		Names:          []*string{aws.String(".dssss." + fname)},
+		WithDecryption: aws.Bool(true),
+	}
+	o, err := f.SSM.GetParameters(g)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	if n == 0 {
-		log.Printf("File is empty: %s\n", fname)
+	if len(o.InvalidParameters) != 0 {
+		return "", errors.New("Invalid parameters found.")
 	}
-	return buf.Bytes(), err
+	if len(o.Parameters) != 1 {
+		return "", errors.New("Too many parameters found..")
+	}
+	return *o.Parameters[0].Value, nil
 }
 
 func (f *FS) getConfigFile() ([]byte, error) {
@@ -53,7 +61,7 @@ func (f *FS) getConfigFile() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s, nil
+	return []byte(s), nil
 }
 
 func (f *FS) LoadConfigFile() (*ConfigFile, error) {
@@ -75,24 +83,70 @@ func (f *FS) LoadConfigFile() (*ConfigFile, error) {
 }
 
 func initializeConfig() (*ConfigFile, *dc.Key, error) {
-	masterKey, err := dc.NewKey()
+	var (
+		masterKey [32]byte
+	)
+	keyArn, err := createKMSAndDataKey()
 	if err != nil {
-		return nil, nil, errors.New(fmt.Sprint("Could not create new master key: %s", err))
+		return nil, nil, err
 	}
-	sealKey, err := dc.NewKey()
+	svc := kms.New(sess)
+	genKeyInput := &kms.GenerateDataKeyInput{
+		KeyId:   aws.String(keyArn),
+		KeySpec: aws.String(kms.DataKeySpecAes256),
+	}
+	out, err := svc.GenerateDataKey(genKeyInput)
 	if err != nil {
-		return nil, nil, errors.New(fmt.Sprintf("Could not create new seal key: %s", err))
+		return nil, nil, fmt.Errorf("Could not generate new kms data key: %s", err)
 	}
+	copy(masterKey[:], out.Plaintext)
 
-	// Encrypt the masterKey with the sealKey. The seal key
-	// is what we expose to the user.
-	cipher, err := dc.Seal(&sealKey.Bytes, masterKey.Bytes[:])
-	if err != nil {
-		return nil, sealKey, err
-	}
 	return &ConfigFile{
-		MasterKeyCiphertext: cipher,
-	}, sealKey, nil
+		MasterKeyCiphertext: out.CiphertextBlob,
+		Active:              true,
+		KMSArn:              keyArn,
+	}, &dc.Key{Bytes: masterKey}, nil
+}
+
+func (f *FS) ListSecret(filter string) ([]string, error) {
+	var (
+		secrets []string
+	)
+	filters := []*string{aws.String(".dssss.secret." + filter)}
+	d := &ssm.DescribeParametersInput{
+		MaxResults: aws.Int64(50),
+		Filters: []*ssm.ParametersFilter{
+			&ssm.ParametersFilter{Key: aws.String("Name"), Values: filters},
+		},
+	}
+	for {
+		desc, err := f.SSM.DescribeParameters(d)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range desc.Parameters {
+			strings.Replace(*p.Name, ".dssss.secret.", "", 1)
+			secrets = append(secrets, *p.Name)
+		}
+		if desc.NextToken != nil {
+			d.NextToken = desc.NextToken
+			continue
+		} else {
+			break
+		}
+	}
+	return secrets, nil
+}
+
+func (f *FS) DeleteSecret(name string) error {
+	d := &ssm.DeleteParameterInput{
+		Name: aws.String(".dssss.secret." + name),
+	}
+	_, err := f.SSM.DeleteParameter(d)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (f *FS) WriteSecret(name string, i interface{}) error {
@@ -103,58 +157,108 @@ func (f *FS) WriteSecret(name string, i interface{}) error {
 	if len(buf) == 2 {
 		buf = []byte{}
 	}
-	_, err = f.Uploader.Upload(&s3manager.UploadInput{
-		Bucket: aws.String(f.Bucket),
-		Key:    aws.String("secret/" + name),
-		Body:   bytes.NewReader(buf),
-	})
+	s := &ssm.PutParameterInput{
+		Type:  aws.String("SecureString"),
+		Value: aws.String(string(buf)),
+		Name:  aws.String(".dssss." + name),
+		KeyId: &f.KMSArn,
+	}
+	_, err = f.SSM.PutParameter(s)
 	if err != nil {
+		fmt.Println(err)
 		return err
 	}
 	return nil
 }
 
+func createKMSAndDataKey() (string, error) {
+	svc := kms.New(sess)
+	k := &kms.CreateKeyInput{
+		Description: aws.String("DSSSS Key"),
+		KeyUsage:    aws.String("ENCRYPT_DECRYPT"),
+	}
+	result, err := svc.CreateKey(k)
+	if err != nil {
+		return "", fmt.Errorf("Could not create key: %s", err)
+	}
+	if result == nil {
+		return "", errors.New("No key returned. Failure creating KMS key")
+	}
+	return *result.KeyMetadata.Arn, nil
+}
+
+func decryptMasterKey(ciphertext []byte) (*dc.Key, error) {
+	var (
+		masterKey [32]byte
+	)
+	svc := kms.New(sess)
+	d := &kms.DecryptInput{
+		CiphertextBlob: ciphertext,
+	}
+	plain, err := svc.Decrypt(d)
+	if err != nil {
+		return nil, err
+	}
+	copy(masterKey[:], plain.Plaintext)
+	return &dc.Key{
+		Bytes: masterKey,
+	}, nil
+}
+
 func (f *FS) Initialize() (*ConfigFile, *dc.Key, error) {
 	var (
-		c *ConfigFile
+		c   *ConfigFile
+		key *dc.Key
 	)
-	_, err := f.getConfigFile()
-	// We found a config file. This is a problem.
-	// Don't initialize on top of a config.
+	d, err := f.getConfigFile()
+	// We found an existing config file. Use it!
 	if err == nil {
-		return nil, nil, errors.New("Config file already exists")
+		err = json.Unmarshal(d, &c)
+		if err != nil {
+			return nil, nil, fmt.Errorf("Could not attempt to fetch current config: %s", err)
+		}
+		// We already have an initialized dssss!
+		if c != nil && c.Active {
+			// We might as well decrypt the master seal key and
+			// head back home to kick of starting the server.
+			key, err = decryptMasterKey(c.MasterKeyCiphertext)
+			if err != nil {
+				return nil, nil, fmt.Errorf("Found existing config but was not able to use it: %s", err)
+			}
+			return c, key, nil
+		}
 	}
 
 	// Since we don't already have a config file. Make one.
-	c, key, err := initializeConfig()
+	c, key, err = initializeConfig()
 	if err != nil {
-		return nil, nil, errors.New(fmt.Sprintf("Could not create config: %s", err))
+		return nil, nil, fmt.Errorf("Could not create config objects: %s", err)
 	}
 	buf, err := json.Marshal(c)
 	if err != nil {
-		return nil, nil, errors.New(fmt.Sprintf("Could not marshal config before upload: %s", err))
+		return nil, nil, fmt.Errorf("Could not marshal config before upload: %s", err)
 	}
-	_, err = f.Uploader.Upload(&s3manager.UploadInput{
-		Bucket: aws.String(f.Bucket),
-		Key:    aws.String(DSConfig),
-		Body:   bytes.NewReader(buf),
+	_, err = f.SSM.PutParameter(&ssm.PutParameterInput{
+		Type:  aws.String("SecureString"),
+		Value: aws.String(string(buf)),
+		Name:  aws.String(".dssss." + DSConfig),
 	})
 	if err != nil {
 		return nil, nil, errors.New(fmt.Sprintf("Could not upload config: %s", err))
 	}
 	return c, key, err
-
 }
 
-func NewFS() *FS {
-	sess := session.Must(session.NewSession(&aws.Config{
-		Region: aws.String("us-west-1"),
-	}))
-	downloader := s3manager.NewDownloader(sess)
-	uploader := s3manager.NewUploader(sess)
+func NewFS(c *ConfigFile) *FS {
+	svc := ssm.New(sess)
+
+	kmsArn := ""
+	if c != nil {
+		kmsArn = c.KMSArn
+	}
 	return &FS{
-		Downloader: downloader,
-		Uploader:   uploader,
-		Bucket:     "dssss",
+		Namespace: ".dssss.",
+		SSM:       svc,
+		KMSArn:    kmsArn,
 	}
 }
