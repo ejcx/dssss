@@ -125,8 +125,8 @@ func (f *FS) ListSecret(filter string) ([]string, error) {
 			return nil, err
 		}
 		for _, p := range desc.Parameters {
-			strings.Replace(*p.Name, ".dssss.secret.", "", 1)
-			secrets = append(secrets, *p.Name)
+			n := strings.Replace(*p.Name, ".dssss.secret.", "", 1)
+			secrets = append(secrets, n)
 		}
 		if desc.NextToken != nil {
 			d.NextToken = desc.NextToken
