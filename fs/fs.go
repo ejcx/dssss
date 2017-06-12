@@ -34,10 +34,9 @@ type FS struct {
 }
 
 func init() {
-	sess = session.Must(session.NewSession(&aws.Config{
-		Region: aws.String("us-west-1"),
-	}))
+	sess = session.Must(session.NewSession(&aws.Config{}))
 }
+
 func (f *FS) ReadFile(fname string) (string, error) {
 	g := &ssm.GetParametersInput{
 		Names:          []*string{aws.String(".dssss." + fname)},
