@@ -95,6 +95,8 @@ func authMiddleware(w http.ResponseWriter, r *http.Request, handle func(w http.R
 		}
 		reauth, err := authed.CreateReAuthKey(day)
 		if err != nil {
+			// We don't have to retur here. If we can't create a reauth token
+			// it isn't the end of the world. It just means no reauth token.
 			log.Printf("Could not create reauth token: %s", err)
 		}
 		w.Header().Add(ReAuthHeader, reauth)
@@ -114,7 +116,6 @@ func list(w http.ResponseWriter, r *http.Request, authed *auth.Auth) {
 
 	s, err := SingletonServer.FS.ListSecret(name)
 	if err != nil {
-		log.Printf("Could not list secret: %s", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -131,39 +132,33 @@ func read(w http.ResponseWriter, r *http.Request, authed *auth.Auth) {
 	vars := mux.Vars(r)
 	name := vars["name"]
 	if name == "" {
-		log.Printf("No secret specified in uri: %s", name)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	buf, err := SingletonServer.FS.ReadFile("secret." + name)
 	if err != nil {
-		log.Printf("Failed to fetch secret: %s", name)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	err = json.Unmarshal([]byte(buf), &e)
 	if err != nil {
-		log.Printf("Failed to unmarshal secret: %s", name)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	secret, roles, err := OpenSecret(&e)
 	if err != nil {
-		log.Printf("Failed to open secret: %s", name)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
 	err = authed.IsAllowed(roles)
 	if err != nil {
-		log.Printf("Attempted unauthorized access to secret: %s", name)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	s := []string{string(secret)}
 	out, err := json.MarshalIndent(s, " ", "    ")
 	if err != nil {
-		log.Printf("Failed to marshal secret array: %s", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}

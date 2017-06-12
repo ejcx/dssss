@@ -1,6 +1,20 @@
 # Dead Simple Secret Store Service - dssss
 dssss is a simple secret store for AWS. dssss is secure, easy to setup, launch, and requires no fine-tuning.
 
+  * [Getting started with dssss](#getting-started-with-dssss)
+  * [API](#api)
+    + [Authentication](#authentication)
+        * [PKCS7 Authentication](#pkcs7-authentication)
+        * [Reauthentication](#reauthentication)
+  * [Administration](#administration)
+    + [Distinguished roles](#distinguished-roles)
+  * [Cryptography](#cryptography)
+    + [Algorithms](#algorithms)
+    + [Init Process](#init-process)
+    + [Secret Storage](#secret-storage)
+    + [Nonces](#nonces)
+    + [Reauthentication](#reauthentication-1)
+
 dssss is specifically for AWS. It provides an API that will:
  - Read, write, and scope secrets to specific IAM roles.
  - Authenticate users based on IAM Role.
@@ -91,6 +105,7 @@ e :) curl http://127.0.0.1:8000/v1/auth -H "Reauthentication: d15d2123fe7fd555e5
 2090bc803237c94d857cf693c6943248ae43eaa0ab0ee0701a4ba2128b7c8929c205152914401a26b3f25432c99c755a8c
 ```
 ## Administration
+Currently the only administrative function available is the deletion of secrets. Soon, administrative functions like export, backup, and more will be available.
 ### Distinguished roles
 dssss introduces the concept of *distinguished roles*.
 

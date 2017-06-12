@@ -165,7 +165,6 @@ func (f *FS) WriteSecret(name string, i interface{}) error {
 	}
 	_, err = f.SSM.PutParameter(s)
 	if err != nil {
-		fmt.Println(err)
 		return err
 	}
 	return nil
