@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"strings"
@@ -61,12 +62,9 @@ vSeDCOUMYQR7R9LINYwouHIziqQYMAkGByqGSM44BAMDLwAwLAIUWXBlk40xTwSw
 )
 
 var (
+	AdminPermission    = &Permission{Read: true, Write: true, Root: true, List: true, Delete: true}
 	DistinguishedRoles = map[string]*Permission{
-		"deletedssss": &Permission{Read: false, Write: false, Root: false, List: false, Delete: true},
-		"rootdssss":   &Permission{Read: true, Write: true, Root: true, List: true, Delete: true},
-		"readdssss":   &Permission{Read: true, Write: false, Root: false, List: false, Delete: false},
-		"listdssss":   &Permission{Read: false, Write: false, Root: false, List: true, Delete: false},
-		"writedssss":  &Permission{Read: false, Write: true, Root: false, List: false, Delete: false},
+		"dssssadmin": AdminPermission,
 	}
 	reauthKey [32]byte
 )
@@ -93,6 +91,13 @@ func init() {
 	_, err := rand.Read(reauthKey[:])
 	if err != nil {
 		log.Fatalf("Could not create re-auth key: %s", err)
+	}
+
+	// Get a list of additional distinguished roles.
+	flag.Parse()
+	args := flag.Args()
+	for _, roleName := range args {
+		DistinguishedRoles[roleName] = AdminPermission
 	}
 }
 func getawscert() ([]*x509.Certificate, error) {
@@ -253,6 +258,10 @@ func (a *Auth) IsAllowed(roleList []string) error {
 
 func (a *Auth) CanRead() bool {
 	return a.Permission.Read || a.Permission.Root
+}
+
+func (a *Auth) CanList() bool {
+	return a.Permission.List || a.Permission.Root
 }
 
 func (a *Auth) CanWrite() bool {

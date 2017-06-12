@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -29,6 +30,7 @@ type ConfigFile struct {
 type FS struct {
 	SSM       *ssm.SSM
 	Namespace string
+	KMSArn    string
 }
 
 func init() {
@@ -106,6 +108,47 @@ func initializeConfig() (*ConfigFile, *dc.Key, error) {
 	}, &dc.Key{Bytes: masterKey}, nil
 }
 
+func (f *FS) ListSecret(filter string) ([]string, error) {
+	var (
+		secrets []string
+	)
+	filters := []*string{aws.String(".dssss.secret." + filter)}
+	d := &ssm.DescribeParametersInput{
+		MaxResults: aws.Int64(50),
+		Filters: []*ssm.ParametersFilter{
+			&ssm.ParametersFilter{Key: aws.String("Name"), Values: filters},
+		},
+	}
+	for {
+		desc, err := f.SSM.DescribeParameters(d)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range desc.Parameters {
+			strings.Replace(*p.Name, ".dssss.secret.", "", 1)
+			secrets = append(secrets, *p.Name)
+		}
+		if desc.NextToken != nil {
+			d.NextToken = desc.NextToken
+			continue
+		} else {
+			break
+		}
+	}
+	return secrets, nil
+}
+
+func (f *FS) DeleteSecret(name string) error {
+	d := &ssm.DeleteParameterInput{
+		Name: aws.String(".dssss.secret." + name),
+	}
+	_, err := f.SSM.DeleteParameter(d)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (f *FS) WriteSecret(name string, i interface{}) error {
 	buf, err := json.MarshalIndent(i, " ", "    ")
 	if err != nil {
@@ -118,9 +161,11 @@ func (f *FS) WriteSecret(name string, i interface{}) error {
 		Type:  aws.String("SecureString"),
 		Value: aws.String(string(buf)),
 		Name:  aws.String(".dssss." + name),
+		KeyId: &f.KMSArn,
 	}
 	_, err = f.SSM.PutParameter(s)
 	if err != nil {
+		fmt.Println(err)
 		return err
 	}
 	return nil
@@ -173,7 +218,6 @@ func (f *FS) Initialize() (*ConfigFile, *dc.Key, error) {
 			return nil, nil, fmt.Errorf("Could not attempt to fetch current config: %s", err)
 		}
 		// We already have an initialized dssss!
-		fmt.Println(c)
 		if c != nil && c.Active {
 			// We might as well decrypt the master seal key and
 			// head back home to kick of starting the server.
@@ -205,10 +249,16 @@ func (f *FS) Initialize() (*ConfigFile, *dc.Key, error) {
 	return c, key, err
 }
 
-func NewFS() *FS {
+func NewFS(c *ConfigFile) *FS {
 	svc := ssm.New(sess)
+
+	kmsArn := ""
+	if c != nil {
+		kmsArn = c.KMSArn
+	}
 	return &FS{
 		Namespace: ".dssss.",
 		SSM:       svc,
+		KMSArn:    kmsArn,
 	}
 }

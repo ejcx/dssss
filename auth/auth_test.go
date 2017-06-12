@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"fmt"
 	"testing"
 )
 
@@ -18,7 +17,6 @@ func TestPKCS7Parse(t *testing.T) {
 	if identity == nil {
 		t.Errorf("Nil aws identity returned for a good pkcs7")
 	}
-	fmt.Println(identity)
 }
 
 func TestBadPKCS7Parse(t *testing.T) {
@@ -36,5 +34,4 @@ func TestAuth(t *testing.T) {
 	if err != nil {
 		t.Errorf("Could not find get auth: %s", err)
 	}
-	fmt.Println(auth)
 }

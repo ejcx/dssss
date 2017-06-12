@@ -17,8 +17,8 @@ const (
 	Auth         = "/v1/auth"
 	Secret       = "/v1/secret/{name:[a-zA-Z0-9]+}"
 	FileBase     = "secrets/"
-	AuthHeader   = "Auth-PKCS7-DSSSS"
-	ReAuthHeader = "ReAuth-DSSSS"
+	AuthHeader   = "Authentication"
+	ReAuthHeader = "ReAuthentication"
 )
 
 var (
@@ -75,18 +75,21 @@ type SecretContent struct {
 
 func authMiddleware(w http.ResponseWriter, r *http.Request, handle func(w http.ResponseWriter, r *http.Request, authed *auth.Auth)) {
 	pkcs7raw := r.Header.Get(AuthHeader)
+	reauthraw := r.Header.Get(ReAuthHeader)
 	authed, err := auth.AuthUser(pkcs7raw)
 	if pkcs7raw == "" {
-		reauthraw := r.Header.Get(ReAuthHeader)
-		authed, err = auth.ValidateReauth(reauthraw)
-		if err != nil {
-			log.Println(err)
+		if reauthraw != "" {
+			authed, err = auth.ValidateReauth(reauthraw)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+		} else {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 	} else {
 		if err != nil {
-			log.Println(err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -105,40 +108,66 @@ func AuthHandler(w http.ResponseWriter, r *http.Request) {
 	authMiddleware(w, r, nil)
 }
 
-func read(w http.ResponseWriter, r *http.Request, authed *auth.Auth) {
-	if !authed.CanRead() {
+func list(w http.ResponseWriter, r *http.Request, authed *auth.Auth) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+
+	s, err := SingletonServer.FS.ListSecret(name)
+	if err != nil {
+		log.Printf("Could not list secret: %s", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	buf, err := json.MarshalIndent(s, " ", "    ")
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.Write(buf)
+}
+
+func read(w http.ResponseWriter, r *http.Request, authed *auth.Auth) {
 	var e EncryptedSecret
 	vars := mux.Vars(r)
 	name := vars["name"]
 	if name == "" {
+		log.Printf("No secret specified in uri: %s", name)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	buf, err := SingletonServer.FS.ReadFile("secret/" + name)
+	buf, err := SingletonServer.FS.ReadFile("secret." + name)
 	if err != nil {
+		log.Printf("Failed to fetch secret: %s", name)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	err = json.Unmarshal([]byte(buf), &e)
 	if err != nil {
+		log.Printf("Failed to unmarshal secret: %s", name)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	secret, roles, err := OpenSecret(&e)
 	if err != nil {
+		log.Printf("Failed to open secret: %s", name)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
 	err = authed.IsAllowed(roles)
 	if err != nil {
+		log.Printf("Attempted unauthorized access to secret: %s", name)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	w.Write([]byte(secret))
+	s := []string{string(secret)}
+	out, err := json.MarshalIndent(s, " ", "    ")
+	if err != nil {
+		log.Printf("Failed to marshal secret array: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.Write(out)
 }
 
 func del(w http.ResponseWriter, r *http.Request, authed *auth.Auth) {
@@ -152,7 +181,7 @@ func del(w http.ResponseWriter, r *http.Request, authed *auth.Auth) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	err := SingletonServer.FS.WriteSecret(name, "")
+	err := SingletonServer.FS.DeleteSecret(name)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -163,10 +192,6 @@ func put(w http.ResponseWriter, r *http.Request, authed *auth.Auth) {
 	var (
 		putInput PutSecretInput
 	)
-	if !authed.CanWrite() {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
 	vars := mux.Vars(r)
 	name := vars["name"]
 	if name == "" {
@@ -188,7 +213,7 @@ func put(w http.ResponseWriter, r *http.Request, authed *auth.Auth) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	err = SingletonServer.FS.WriteSecret(name, enc)
+	err = SingletonServer.FS.WriteSecret("secret."+name, enc)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -203,6 +228,8 @@ func SecretHandler(w http.ResponseWriter, r *http.Request) {
 		authMiddleware(w, r, put)
 	case "GET":
 		authMiddleware(w, r, read)
+	case "LIST":
+		authMiddleware(w, r, list)
 	default:
 		w.WriteHeader(http.StatusBadRequest)
 	}
