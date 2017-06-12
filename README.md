@@ -2,10 +2,15 @@
 dssss is a simple secret store for AWS. dssss is secure, easy to setup, launch, and requires no fine-tuning.
 
   * [Getting started with dssss](#getting-started-with-dssss)
+      + [How does dssss work?](#how-does-dssss-work)
   * [API](#api)
     + [Authentication](#authentication)
         * [PKCS7 Authentication](#pkcs7-authentication)
         * [Reauthentication](#reauthentication)
+    + [GET /v1/secret/{secretname}](#get-v1secretsecretname)
+    + [PUT /v1/secret/{secretname}](#put-v1secretsecretname)
+    + [DELETE /v1/secret/{secretname}](#delete-v1secretsecretname)
+    + [LIST /v1/secret/{secretname}](#list-v1secretsecretname)
   * [Administration](#administration)
     + [Distinguished roles](#distinguished-roles)
   * [Cryptography](#cryptography)
@@ -39,8 +44,12 @@ Running dssss is as easy as:
 $ dssss
 ```
 
-For more information about what each component is used for, especially what
-they encryption keys are used for, consult the cryptography details section.
+### How does dssss work?
+On the average case, dssss works like this. This is a very high level diagram, and does not exact reflect the intracacies of how each request is validated, but it gives you a great idea of how requests are validated and how dssss works.
+
+![how dssss works](docs/howdssssworks.png)
+
+For more information about what each component is used for, especially what they encryption keys are used for, consult the cryptography details section.
 
 ## API
 dssss is meant to have a very small and easy to grok API.
