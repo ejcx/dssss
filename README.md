@@ -1,5 +1,5 @@
 # Dead Simple Secret Store Service - dssss
-dssss is a simple secret store for AWS. dssss is secure, easy to setup, launch, and requires no fine-tuning.
+You shouldn't use dssss. It's not maintained, but shows a nice way to do EC2 instance authentication.
 
   * [Getting started with dssss](#getting-started-with-dssss)
       + [How does dssss work?](#how-does-dssss-work)
